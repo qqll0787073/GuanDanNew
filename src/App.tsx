@@ -464,13 +464,20 @@ export default function App() {
           }
           return data.user;
         } else {
-          alert(language === 'en' ? (data.error || 'Registration failed') : (data.error === 'Email already registered' ? '该邮箱已被注册。' : '注册失败。'));
-          return null;
+          if (data.error === 'Email already registered') {
+            alert(language === 'en' ? 'This email is already registered.' : '该邮箱已被注册。');
+            return null;
+          }
+          throw new Error(data.error || 'Registration failed');
         }
       } else {
         const errData = await response.json().catch(() => ({}));
-        alert(language === 'en' ? (errData.error || 'Registration failed.') : (errData.error === 'Email already registered' ? '该邮箱已被注册。' : '注册失败。'));
-        return null;
+        if (errData && errData.error === 'Email already registered') {
+          alert(language === 'en' ? 'This email is already registered.' : '该邮箱已被注册。');
+          return null;
+        }
+        // Throw to trigger catch block for local fallback (e.g. 404 Not Found, 500 Server Error)
+        throw new Error(errData.error || `Server error ${response.status}`);
       }
     } catch (err) {
       console.error("Server register failed, falling back to local:", err);

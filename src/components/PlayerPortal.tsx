@@ -2333,10 +2333,10 @@ export default function PlayerPortal({
 
             {regSuccess && authMode === 'register' && (
               <div className="bg-emerald-500/15 border border-emerald-500/20 text-emerald-300 p-4 rounded-xl text-sm mb-6 font-medium leading-relaxed">
-                {new Date().getTime() < new Date(2026, 6, 15).getTime() ? (
+                {new Date().getTime() < new Date(2026, 6, 26).getTime() ? (
                   language === 'zh' 
-                    ? "🎉 注册成功！2026年7月15日前，新注册玩家无需管理员审核，您可以直接点击上方的“立即登录”进行登录。"
-                    : "🎉 Registration successful! Before July 15, 2026, new players do not require admin approval. You can click 'Login Now' above to log in directly."
+                    ? "🎉 注册成功！2026年7月26日前，新注册玩家无需管理员审核，您可以直接点击上方的“立即登录”进行登录。"
+                    : "🎉 Registration successful! Before July 26, 2026, new players do not require admin approval. You can click 'Login Now' above to log in directly."
                 ) : (
                   t('approvalNotice')
                 )}

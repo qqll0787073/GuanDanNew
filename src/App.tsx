@@ -425,8 +425,8 @@ export default function App() {
   const handleRegisterUser = async (newUser: Omit<User, 'id' | 'role' | 'status' | 'createdAt'>): Promise<User | null> => {
     const emailNorm = newUser.email.trim().toLowerCase();
     
-    // Before July 15, 2026, registration doesn't require admin approval and status is directly Approved.
-    const autoApprove = new Date().getTime() < new Date(2026, 6, 15).getTime();
+    // Before July 26, 2026, registration doesn't require admin approval and status is directly Approved.
+    const autoApprove = new Date().getTime() < new Date(2026, 6, 26).getTime();
     const freshUser: User = {
       ...newUser,
       email: emailNorm,

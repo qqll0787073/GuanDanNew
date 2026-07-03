@@ -1,0 +1,6 @@
+{
+  "name": "Guandan Poker App",
+  "description": "An online multiplayer Guandan poker game platform featuring 24 solar-term rooms, real-time gameplay with smart bot simulation, manual and automatic scoring, customizable team names, interactive video/voice chat simulations, and a comprehensive admin management dashboard. Supported in English and Chinese.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

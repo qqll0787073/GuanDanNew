@@ -638,7 +638,7 @@ export default function App() {
               </h2>
               <p className="text-base text-slate-400 max-w-xl mx-auto leading-relaxed">
                 {language === 'zh' 
-                  ? '掼蛋是深受大众喜爱的智力运动，本系统支持真实发牌、二十四节气房间、音视频通话、中英文双语、自动与手动计分，以及完备的后台账号审批系统。' 
+                  ? '掼蛋是深受大众喜爱的智力运动，本系统支持真实随机发牌、二十四节气房间、音视频通话、中英文双语、自动与手动计分，以及完备的后台账号审批系统。' 
                   : 'Guandan is a beloved strategy card game. Experience realistic gameplay, solar-term rooms, WebRTC audio/video chat, manual/automatic scoring, and powerful admin account approvals.'}
               </p>
             </div>

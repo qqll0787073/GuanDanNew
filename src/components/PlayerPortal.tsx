@@ -1508,7 +1508,7 @@ export default function PlayerPortal({
     }, 1200);
 
     return () => clearTimeout(timer);
-  }, [game?.activePlayerIndex, game?.status]);
+  }, [game?.activePlayerIndex, game?.status, game?.lastPlay, game?.history?.length]);
 
   // Automatically skip finished players' turns & handle "接风" (Wind Catching) rule
   useEffect(() => {

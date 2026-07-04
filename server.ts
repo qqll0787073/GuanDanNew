@@ -35,7 +35,64 @@ function writeDb(data: any) {
   }
 }
 
+// Seed 120 deterministic users if they do not exist
+function seedBuiltinUsers() {
+  const db = readDb();
+  const currentUsers = db.users || [];
+  
+  // Check if we already have the builtin users
+  const hasBuiltins = currentUsers.some((u: any) => u && u.id && u.id.startsWith("user-builtin-"));
+  if (hasBuiltins) {
+    return;
+  }
+
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  const users: any[] = [];
+  let seed = 123456789;
+  function random() {
+    seed = (seed * 9301 + 49297) % 233280;
+    return seed / 233280;
+  }
+  
+  const emailsSet = new Set<string>();
+  while (emailsSet.size < 120) {
+    let localPart = "";
+    for (let i = 0; i < 4; i++) {
+      const idx = Math.floor(random() * chars.length);
+      localPart += chars[idx];
+    }
+    const email = `${localPart}@gamil.com`;
+    if (!emailsSet.has(email)) {
+      emailsSet.add(email);
+    }
+  }
+
+  const sortedEmails = Array.from(emailsSet).sort();
+  sortedEmails.forEach((email, index) => {
+    const localPart = email.split('@')[0];
+    const password = `${localPart}333`;
+    users.push({
+      id: `user-builtin-${index + 1}`,
+      fullName: `Builtin Player ${index + 1}`,
+      displayName: `玩家_${localPart.toUpperCase()}`,
+      email: email,
+      password: password,
+      role: "player",
+      status: "Approved",
+      preferredLanguage: "zh",
+      createdAt: "2026-07-03T19:50:00.000Z"
+    });
+  });
+
+  const updatedUsers = [...currentUsers, ...users];
+  writeDb({ users: updatedUsers });
+  console.log(`Successfully seeded ${users.length} builtin players into server_db.json.`);
+}
+
 async function startServer() {
+  // Ensure builtin users are seeded before start
+  seedBuiltinUsers();
+
   const app = express();
   const PORT = 3000;
 
@@ -129,6 +186,27 @@ async function startServer() {
         return res.status(401).json({ error: "Invalid credentials" });
       }
       return res.json({ success: true, user: matched });
+    }
+    return res.status(404).json({ error: "User not found" });
+  });
+
+  app.post("/api/users/update-password", (req, res) => {
+    const { userId, oldPassword, newPassword } = req.body;
+    if (!userId || !newPassword) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+    const db = readDb();
+    const currentUsers = db.users || [];
+    const matchedIdx = currentUsers.findIndex((u: any) => u && u.id === userId);
+    if (matchedIdx !== -1) {
+      const user = currentUsers[matchedIdx];
+      if (user.password && user.password !== oldPassword) {
+        return res.status(400).json({ error: "Incorrect old password" });
+      }
+      user.password = newPassword;
+      currentUsers[matchedIdx] = user;
+      writeDb({ users: currentUsers });
+      return res.json({ success: true, user });
     }
     return res.status(404).json({ error: "User not found" });
   });

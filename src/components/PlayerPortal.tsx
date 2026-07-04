@@ -7,7 +7,7 @@ import {
   generateDecks, shuffleCards, sortCards, canBeat, analyzeCombination, makeBotMove, calculateGameScore, getNextLevel, adjustRanksForLevel 
 } from '../utils/guandanEngine';
 import { 
-  User as UserIcon, LogOut, Video, VideoOff, Mic, MicOff, Users, ArrowRight, ArrowLeft, ArrowUp, ArrowDown, Shield, RefreshCw, Layers, SortAsc, HelpCircle, Eye, ChevronRight, Edit2, Play, Circle, Trophy, History, Cpu
+  User as UserIcon, LogOut, Key, Video, VideoOff, Mic, MicOff, Users, ArrowRight, ArrowLeft, ArrowUp, ArrowDown, Shield, RefreshCw, Layers, SortAsc, HelpCircle, Eye, ChevronRight, Edit2, Play, Circle, Trophy, History, Cpu
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -131,6 +131,14 @@ export default function PlayerPortal({
   // Login state
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+
+  // Change password state
+  const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
+  const [oldPassword, setOldPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [changePasswordError, setChangePasswordError] = useState('');
+  const [changePasswordSuccess, setChangePasswordSuccess] = useState('');
 
   // Navigation and play state
   const [selectedRoomId, setSelectedRoomId] = useState<number | null>(null);
@@ -278,6 +286,57 @@ export default function PlayerPortal({
     } catch (err) {
       console.error(err);
       setAuthError(language === 'en' ? 'Server error. Please try again.' : '服务器错误，请稍后重试。');
+    }
+  };
+
+  // Change Password Handler
+  const handleChangePasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentUser) return;
+    if (!oldPassword || !newPassword || !confirmNewPassword) {
+      setChangePasswordError(language === 'en' ? 'All fields are required.' : '所有字段都是必填的。');
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setChangePasswordError(language === 'en' ? 'New passwords do not match.' : '两次输入的新密码不一致。');
+      return;
+    }
+    setChangePasswordError('');
+    setChangePasswordSuccess('');
+
+    try {
+      const response = await fetch('/api/users/update-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: currentUser.id,
+          oldPassword,
+          newPassword
+        })
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.user) {
+          setChangePasswordSuccess(language === 'en' ? 'Password updated successfully!' : '密码修改成功！');
+          setOldPassword('');
+          setNewPassword('');
+          setConfirmNewPassword('');
+          // Update current user
+          setCurrentUser(data.user);
+          setTimeout(() => {
+            setShowChangePasswordModal(false);
+            setChangePasswordSuccess('');
+          }, 1500);
+        } else {
+          setChangePasswordError(data.error || (language === 'en' ? 'Failed to update password.' : '密码修改失败。'));
+        }
+      } else {
+        const errData = await response.json().catch(() => ({}));
+        setChangePasswordError(errData.error || (language === 'en' ? 'Incorrect old password or server error.' : '原密码错误或服务器错误。'));
+      }
+    } catch (err) {
+      console.error(err);
+      setChangePasswordError(language === 'en' ? 'Failed to communicate with server.' : '无法连接服务器，请稍后重试。');
     }
   };
 
@@ -2289,6 +2348,20 @@ export default function PlayerPortal({
               <UserIcon className="w-4 h-4 text-emerald-400" />
               <span className="text-xs font-medium text-slate-200">{currentUser.displayName}</span>
               <button 
+                onClick={() => {
+                  setOldPassword('');
+                  setNewPassword('');
+                  setConfirmNewPassword('');
+                  setChangePasswordError('');
+                  setChangePasswordSuccess('');
+                  setShowChangePasswordModal(true);
+                }}
+                className="text-slate-400 hover:text-emerald-400 transition ml-2"
+                title={language === 'en' ? 'Change Password' : '修改密码'}
+              >
+                <Key className="w-3.5 h-3.5" />
+              </button>
+              <button 
                 onClick={() => setCurrentUser(null)}
                 className="text-slate-400 hover:text-red-400 transition ml-1"
                 title={t('leaveLobby')}
@@ -3678,6 +3751,102 @@ export default function PlayerPortal({
                 </button>
               </div>
 
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* CHANGE PASSWORD MODAL */}
+      <AnimatePresence>
+        {showChangePasswordModal && (
+          <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-md w-full shadow-2xl relative overflow-hidden"
+            >
+              <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-2xl pointer-events-none"></div>
+
+              <h3 className="text-xl font-bold text-white mb-2 flex items-center space-x-2">
+                <Key className="w-5 h-5 text-emerald-400" />
+                <span>{language === 'zh' ? '修改密码' : 'Change Password'}</span>
+              </h3>
+              <p className="text-xs text-slate-400 mb-6">
+                {language === 'zh' ? '请保护好您的账户安全，定期更换密码。' : 'Please keep your account secure by updating your password.'}
+              </p>
+
+              <form onSubmit={handleChangePasswordSubmit} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">
+                    {language === 'zh' ? '当前/原密码 *' : 'Current / Old Password *'}
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={oldPassword}
+                    onChange={(e) => setOldPassword(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-white focus:border-emerald-500 focus:outline-none"
+                    placeholder={language === 'zh' ? '请输入当前密码' : 'Enter current password'}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">
+                    {language === 'zh' ? '新密码 *' : 'New Password *'}
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-white focus:border-emerald-500 focus:outline-none"
+                    placeholder={language === 'zh' ? '请输入新密码' : 'Enter new password'}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">
+                    {language === 'zh' ? '确认新密码 *' : 'Confirm New Password *'}
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={confirmNewPassword}
+                    onChange={(e) => setConfirmNewPassword(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-white focus:border-emerald-500 focus:outline-none"
+                    placeholder={language === 'zh' ? '请再次输入新密码' : 'Re-enter new password'}
+                  />
+                </div>
+
+                {changePasswordError && (
+                  <div className="text-red-400 text-xs font-semibold bg-red-950/20 border border-red-900/30 rounded-xl p-3">
+                    {changePasswordError}
+                  </div>
+                )}
+
+                {changePasswordSuccess && (
+                  <div className="text-emerald-400 text-xs font-semibold bg-emerald-950/20 border border-emerald-900/30 rounded-xl p-3">
+                    {changePasswordSuccess}
+                  </div>
+                )}
+
+                <div className="mt-6 flex space-x-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowChangePasswordModal(false)}
+                    className="w-1/2 py-3 bg-slate-950 hover:bg-slate-850 text-slate-400 hover:text-white border border-slate-800 rounded-xl text-xs font-bold uppercase transition"
+                  >
+                    {language === 'zh' ? '取消' : 'Cancel'}
+                  </button>
+                  <button
+                    type="submit"
+                    className="w-1/2 py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded-xl text-xs uppercase shadow-lg shadow-emerald-500/5 transition"
+                  >
+                    {language === 'zh' ? '确认修改' : 'Update Password'}
+                  </button>
+                </div>
+              </form>
             </motion.div>
           </div>
         )}

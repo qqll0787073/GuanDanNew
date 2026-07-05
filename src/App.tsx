@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { User, Room, ScoreRecord } from './types';
-import PlayerPortal, { SOLAR_TERMS } from './components/PlayerPortal';
+import PlayerPortal from './components/PlayerPortal';
 import AdminPortal from './components/AdminPortal';
 import { getTranslation } from './i18n';
+import { fetchRooms, type Room as SupabaseRoom } from './lib/rooms';
 import { 
   User as UserIcon, Shield, ChevronRight, CheckCircle, Flame, Layers, Award, Activity 
 } from 'lucide-react';
@@ -61,19 +62,6 @@ const SEED_USERS: User[] = [
   }
 ];
 
-// Initialize 24 Solar-term rooms
-const SEED_ROOMS: Room[] = SOLAR_TERMS.map((term, idx) => ({
-  id: idx + 1,
-  nameEn: term.nameEn,
-  nameZh: term.nameZh,
-  maxPlayers: 4,
-  currentPlayerCount: 0,
-  status: 'Waiting',
-  isVoiceActive: true,
-  isVideoActive: true,
-  players: [],
-}));
-
 // Seed initial game records
 const SEED_SCORES: ScoreRecord[] = [
   {
@@ -107,6 +95,37 @@ const SEED_SCORES: ScoreRecord[] = [
     notes: 'Manually logged score. Clean finish.',
   }
 ];
+
+const toAppRoomStatus = (status: string): Room['status'] => {
+  if (status === 'Playing' || status === 'Full' || status === 'Waiting') {
+    return status;
+  }
+
+  const normalizedStatus = status.trim().toLowerCase();
+  if (normalizedStatus === 'playing') return 'Playing';
+  if (normalizedStatus === 'full') return 'Full';
+  return 'Waiting';
+};
+
+const toAppRoom = (room: SupabaseRoom): Room => ({
+  id: room.room_order,
+  nameEn: room.room_name_en,
+  nameZh: room.room_name_zh,
+  maxPlayers: room.max_players,
+  currentPlayerCount: room.current_player_count,
+  status: toAppRoomStatus(room.status),
+  isVoiceActive: room.is_active,
+  isVideoActive: room.is_active,
+  players: [],
+});
+
+const getErrorMessage = (error: unknown) => {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return JSON.stringify(error, null, 2);
+};
 
 export default function App() {
   const [language, setLanguage] = useState<'en' | 'zh'>('zh');
@@ -198,9 +217,10 @@ export default function App() {
         console.error("Failed to parse rooms database", e);
       }
     }
-    localStorage.setItem(LOCAL_ROOMS_KEY, JSON.stringify(SEED_ROOMS));
-    return SEED_ROOMS;
+    return [];
   });
+  const [roomsLoading, setRoomsLoading] = useState(true);
+  const [roomsError, setRoomsError] = useState<string | null>(null);
 
   const [scoresHistory, setScoresHistory] = useState<ScoreRecord[]>(() => {
     const localScores = localStorage.getItem(LOCAL_SCORES_KEY);
@@ -260,6 +280,43 @@ export default function App() {
     scoresRef.current = scoresHistory;
   }, [scoresHistory]);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadRooms = async () => {
+      setRoomsLoading(true);
+      setRoomsError(null);
+
+      try {
+        const supabaseRooms = await fetchRooms();
+        const nextRooms = supabaseRooms.map(toAppRoom);
+
+        if (!isMounted) return;
+
+        setRooms(nextRooms);
+        localStorage.setItem(LOCAL_ROOMS_KEY, JSON.stringify(nextRooms));
+
+        if (nextRooms.length !== 24) {
+          setRoomsError(`Expected 24 rooms, loaded ${nextRooms.length} rooms.`);
+        }
+      } catch (error) {
+        if (isMounted) {
+          setRoomsError(getErrorMessage(error));
+        }
+      } finally {
+        if (isMounted) {
+          setRoomsLoading(false);
+        }
+      }
+    };
+
+    loadRooms();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   // Poll server state every 2 seconds for real-time multiplayer synchronization (Server is source of truth, conflict-free)
   useEffect(() => {
     let isMounted = true;
@@ -309,52 +366,52 @@ export default function App() {
 
             // 2. Synchronize Rooms (Conflict-free intelligent merge prevents seat reset and player kicked out issues)
             const hasServerRooms = data.rooms && Array.isArray(data.rooms) && data.rooms.length > 0;
-            if (!hasServerRooms) {
-              fetch('/api/rooms', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ rooms: SEED_ROOMS })
-              }).catch(() => {});
-              setRooms(SEED_ROOMS);
-              localStorage.setItem(LOCAL_ROOMS_KEY, JSON.stringify(SEED_ROOMS));
-            } else {
+            if (hasServerRooms) {
               const localRooms = roomsRef.current || [];
-              const activeRoom = currentUser ? localRooms.find(r => r.seatedPlayers?.some(p => p.id === currentUser.id)) : null;
-              const activeRoomId = activeRoom ? activeRoom.id : null;
+              if (localRooms.length > 0) {
+                const activeRoom = currentUser ? localRooms.find(r => r.seatedPlayers?.some(p => p.id === currentUser.id)) : null;
+                const activeRoomId = activeRoom ? activeRoom.id : null;
 
-              // Build merged rooms list to protect the user's active seated status
-              const mergedRooms = data.rooms.map((serverRoom: Room) => {
-                const localRoom = localRooms.find(r => r.id === serverRoom.id);
-                if (!localRoom) return serverRoom;
+                // Build merged rooms list to protect the user's active seated status
+                const mergedRooms = localRooms.map((localRoom) => {
+                  const serverRoom = data.rooms.find((r: Room) => r.id === localRoom.id);
+                  if (!serverRoom) return localRoom;
 
-                if (localRoom.id === activeRoomId && currentUser) {
-                  const isSeatedLocally = localRoom.seatedPlayers?.some(p => p.id === currentUser.id);
-                  const isSeatedOnServer = serverRoom.seatedPlayers?.some(p => p.id === currentUser.id);
+                  if (localRoom.id === activeRoomId && currentUser) {
+                    const isSeatedLocally = localRoom.seatedPlayers?.some(p => p.id === currentUser.id);
+                    const isSeatedOnServer = serverRoom.seatedPlayers?.some(p => p.id === currentUser.id);
 
-                  if (isSeatedLocally && !isSeatedOnServer) {
-                    const mergedSeated = [...(localRoom.seatedPlayers || [])];
-                    (serverRoom.seatedPlayers || []).forEach(sp => {
-                      if (!mergedSeated.some(lp => lp.seat === sp.seat || lp.id === sp.id)) {
-                        mergedSeated.push(sp);
-                      }
-                    });
-                    mergedSeated.sort((a, b) => a.seat - b.seat);
-                    return {
-                      ...localRoom,
-                      seatedPlayers: mergedSeated,
-                      currentPlayerCount: mergedSeated.length,
-                      players: mergedSeated.map(p => p.id)
-                    };
+                    if (isSeatedLocally && !isSeatedOnServer) {
+                      const mergedSeated = [...(localRoom.seatedPlayers || [])];
+                      (serverRoom.seatedPlayers || []).forEach(sp => {
+                        if (!mergedSeated.some(lp => lp.seat === sp.seat || lp.id === sp.id)) {
+                          mergedSeated.push(sp);
+                        }
+                      });
+                      mergedSeated.sort((a, b) => a.seat - b.seat);
+                      return {
+                        ...localRoom,
+                        seatedPlayers: mergedSeated,
+                        currentPlayerCount: mergedSeated.length,
+                        players: mergedSeated.map(p => p.id)
+                      };
+                    }
                   }
-                }
-                return serverRoom;
-              });
+                  return {
+                    ...localRoom,
+                    currentPlayerCount: serverRoom.currentPlayerCount,
+                    status: serverRoom.status,
+                    players: serverRoom.players,
+                    seatedPlayers: serverRoom.seatedPlayers,
+                  };
+                });
 
-              const localStr = JSON.stringify(localRooms);
-              const mergedStr = JSON.stringify(mergedRooms);
-              if (localStr !== mergedStr && (now - lastRoomsWriteRef.current > 3000)) {
-                setRooms(mergedRooms);
-                localStorage.setItem(LOCAL_ROOMS_KEY, JSON.stringify(mergedRooms));
+                const localStr = JSON.stringify(localRooms);
+                const mergedStr = JSON.stringify(mergedRooms);
+                if (localStr !== mergedStr && (now - lastRoomsWriteRef.current > 3000)) {
+                  setRooms(mergedRooms);
+                  localStorage.setItem(LOCAL_ROOMS_KEY, JSON.stringify(mergedRooms));
+                }
               }
             }
 
@@ -598,6 +655,15 @@ export default function App() {
 
   return (
     <div className="bg-slate-950 min-h-screen text-slate-100 font-sans selection:bg-emerald-500 selection:text-slate-950">
+      {(roomsLoading || roomsError) && (
+        <div className={`px-4 py-2 text-center text-xs font-bold ${roomsError ? 'bg-red-950 text-red-200' : 'bg-slate-900 text-teal-200'}`}>
+          {roomsError
+            ? `${language === 'zh' ? '房间加载失败' : 'Room load issue'}: ${roomsError}`
+            : language === 'zh'
+              ? '正在加载房间...'
+              : 'Loading rooms...'}
+        </div>
+      )}
       
       {/* 1. HOMEPAGE PORTAL SELECTION */}
       {portal === 'home' && (

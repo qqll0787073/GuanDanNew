@@ -1,0 +1,3 @@
+-- Supabase seed data placeholder.
+-- Add local development seed statements here when the schema is finalized.
+-- This file is not applied automatically and does not modify any existing database.

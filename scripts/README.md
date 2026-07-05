@@ -11,7 +11,7 @@ VITE_SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 ```
 
-The script requires the service role key because it calls `supabase.auth.admin.createUser()`. Never expose this key in browser code, screenshots, logs, commits, or pull requests.
+The script requires the service role key because it calls `supabase.auth.admin.createUser()` and upserts `public.profiles` with the same admin client. Do not use `VITE_SUPABASE_ANON_KEY` or a publishable key for this script. Never expose the service role key in browser code, screenshots, logs, commits, or pull requests.
 
 ## CSV Format
 
@@ -44,6 +44,8 @@ For each row, the script:
 
 - Creates a Supabase Auth user with `email_confirm: true`
 - Sets `user_metadata.display_name`
+- Reuses an existing Auth user when the email already exists and the user can be found
 - Upserts `public.profiles` with role `player`, status `approved`, and preferred language `en`
+- Continues after failed rows and prints created, skipped, and failed counts plus the first 5 errors
 
 Run this script only once for the uploaded user list unless you intentionally want to create another batch.

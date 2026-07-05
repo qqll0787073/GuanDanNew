@@ -9,6 +9,45 @@ type ImportUser = {
   displayName: string;
 };
 
+type ImportStats = {
+  createdUsers: number;
+  skippedExistingUsers: number;
+  failedUsers: number;
+  errors: string[];
+};
+
+type AuthUser = {
+  id: string;
+  email?: string;
+};
+
+type SupabaseAdminClient = {
+  auth: {
+    admin: {
+      createUser: (attributes: {
+        email: string;
+        password: string;
+        email_confirm: boolean;
+        user_metadata: { display_name: string };
+      }) => Promise<{ data: { user: AuthUser | null }; error: { message: string } | null }>;
+      listUsers: (params: { page: number; perPage: number }) => Promise<{ data: { users: AuthUser[] }; error: { message: string } | null }>;
+    };
+  };
+  from: (table: 'profiles') => {
+    upsert: (
+      values: {
+        id: string;
+        email: string;
+        display_name: string;
+        role: 'player';
+        status: 'approved';
+        preferred_language: 'en';
+      },
+      options: { onConflict: 'id' },
+    ) => Promise<{ error: { message: string } | null }>;
+  };
+};
+
 const requiredHeaders = ['email', 'password', 'display_name'] as const;
 const defaultCsvPath = 'scripts/120-users-csv.csv';
 
@@ -25,7 +64,7 @@ function loadLocalEnv() {
     if (separatorIndex === -1) continue;
 
     const key = trimmed.slice(0, separatorIndex).trim();
-    const value = trimmed.slice(separatorIndex + 1).trim();
+    const value = trimmed.slice(separatorIndex + 1).trim().replace(/^["']|["']$/g, '');
     if (key && !process.env[key]) {
       process.env[key] = value;
     }
@@ -113,6 +152,59 @@ function readUsersFromCsv(csvPath: string): ImportUser[] {
   });
 }
 
+async function findAuthUserByEmail(supabaseAdmin: SupabaseAdminClient, email: string) {
+  const normalizedEmail = email.toLowerCase();
+  const perPage = 1000;
+  let page = 1;
+
+  while (true) {
+    const { data, error } = await supabaseAdmin.auth.admin.listUsers({
+      page,
+      perPage,
+    });
+
+    if (error) {
+      throw new Error(`Failed to search auth users: ${error.message}`);
+    }
+
+    const existingUser = data.users.find(user => user.email?.toLowerCase() === normalizedEmail);
+    if (existingUser) {
+      return existingUser;
+    }
+
+    if (data.users.length < perPage) {
+      return null;
+    }
+
+    page += 1;
+  }
+}
+
+async function createOrReuseAuthUser(supabaseAdmin: SupabaseAdminClient, user: ImportUser) {
+  const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+    email: user.email,
+    password: user.password,
+    email_confirm: true,
+    user_metadata: {
+      display_name: user.displayName,
+    },
+  });
+
+  if (authData.user) {
+    return { authUser: authData.user, created: true };
+  }
+
+  const authErrorMessage = authError?.message || '';
+  if (/already|exists|registered/i.test(authErrorMessage)) {
+    const existingUser = await findAuthUserByEmail(supabaseAdmin, user.email);
+    if (existingUser) {
+      return { authUser: existingUser, created: false };
+    }
+  }
+
+  throw new Error(authErrorMessage || 'missing auth user');
+}
+
 async function main() {
   loadLocalEnv();
 
@@ -129,47 +221,73 @@ async function main() {
     throw new Error('Missing SUPABASE_SERVICE_ROLE_KEY in .env.local.');
   }
 
+  if (/^(sb_publishable_|sb_anon_|eyJ)/.test(process.env.VITE_SUPABASE_ANON_KEY || '') && serviceRoleKey === process.env.VITE_SUPABASE_ANON_KEY) {
+    throw new Error('SUPABASE_SERVICE_ROLE_KEY must not reuse VITE_SUPABASE_ANON_KEY.');
+  }
+
+  if (serviceRoleKey.startsWith('sb_publishable_') || serviceRoleKey.startsWith('sb_anon_')) {
+    throw new Error('SUPABASE_SERVICE_ROLE_KEY must be a service role key, not an anon or publishable key.');
+  }
+
   const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
     },
-  });
+  }) as unknown as SupabaseAdminClient;
 
   const users = readUsersFromCsv(path.resolve(process.cwd(), csvPath));
+  const stats: ImportStats = {
+    createdUsers: 0,
+    skippedExistingUsers: 0,
+    failedUsers: 0,
+    errors: [],
+  };
+
   console.log(`Importing ${users.length} users...`);
 
   for (const user of users) {
-    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-      email: user.email,
-      password: user.password,
-      email_confirm: true,
-      user_metadata: {
+    try {
+      const { authUser, created } = await createOrReuseAuthUser(supabaseAdmin, user);
+
+      const { error: profileError } = await supabaseAdmin.from('profiles').upsert({
+        id: authUser.id,
+        email: user.email,
         display_name: user.displayName,
-      },
-    });
+        role: 'player',
+        status: 'approved',
+        preferred_language: 'en',
+      }, { onConflict: 'id' });
 
-    if (authError || !authData.user) {
-      throw new Error(`Failed to create auth user ${user.email}: ${authError?.message || 'missing auth user'}`);
+      if (profileError) {
+        throw new Error(`Failed to upsert profile: ${profileError.message}`);
+      }
+
+      if (created) {
+        stats.createdUsers += 1;
+        console.log(`Created ${user.email}`);
+      } else {
+        stats.skippedExistingUsers += 1;
+        console.log(`Reused existing auth user ${user.email}`);
+      }
+    } catch (error) {
+      stats.failedUsers += 1;
+      const message = error instanceof Error ? error.message : JSON.stringify(error);
+      const formattedError = `${user.email}: ${message}`;
+      stats.errors.push(formattedError);
+      console.error(`Failed ${formattedError}`);
     }
-
-    const { error: profileError } = await supabaseAdmin.from('profiles').upsert({
-      id: authData.user.id,
-      email: user.email,
-      display_name: user.displayName,
-      role: 'player',
-      status: 'approved',
-      preferred_language: 'en',
-    });
-
-    if (profileError) {
-      throw new Error(`Failed to upsert profile ${user.email}: ${profileError.message}`);
-    }
-
-    console.log(`Imported ${user.email}`);
   }
 
   console.log('Import complete.');
+  console.log(`Created users count: ${stats.createdUsers}`);
+  console.log(`Skipped existing users count: ${stats.skippedExistingUsers}`);
+  console.log(`Failed users count: ${stats.failedUsers}`);
+
+  if (stats.errors.length > 0) {
+    console.log('First 5 errors:');
+    stats.errors.slice(0, 5).forEach(error => console.log(error));
+  }
 }
 
 main().catch(error => {

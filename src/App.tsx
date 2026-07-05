@@ -4,6 +4,7 @@ import PlayerPortal from './components/PlayerPortal';
 import AdminPortal from './components/AdminPortal';
 import { getTranslation } from './i18n';
 import { fetchRooms, type Room as SupabaseRoom } from './lib/rooms';
+import { supabase } from './lib/supabase';
 import { 
   User as UserIcon, Shield, ChevronRight, CheckCircle, Flame, Layers, Award, Activity 
 } from 'lucide-react';
@@ -126,6 +127,32 @@ const getErrorMessage = (error: unknown) => {
 
   return JSON.stringify(error, null, 2);
 };
+
+type SupabaseProfile = {
+  id: string;
+  full_name: string | null;
+  display_name: string | null;
+  email: string | null;
+  phone: string | null;
+  role: string | null;
+  status: string | null;
+  preferred_language: string | null;
+  created_at: string | null;
+  approved_at: string | null;
+};
+
+const toAppUser = (profile: SupabaseProfile, fallbackEmail: string): User => ({
+  id: profile.id,
+  fullName: profile.full_name || profile.display_name || fallbackEmail,
+  displayName: profile.display_name || profile.full_name || fallbackEmail,
+  email: profile.email || fallbackEmail,
+  phone: profile.phone || undefined,
+  role: profile.role === 'admin' ? 'admin' : 'player',
+  status: 'Approved',
+  preferredLanguage: profile.preferred_language === 'en' ? 'en' : 'zh',
+  createdAt: profile.created_at || new Date().toISOString(),
+  approvedAt: profile.approved_at || undefined,
+});
 
 export default function App() {
   const [language, setLanguage] = useState<'en' | 'zh'>('zh');
@@ -568,43 +595,57 @@ export default function App() {
     saveUsersToStorage(prev => [...prev, newAdmin]);
   };
 
-  // Validate Player login with password check (Supports both fast server-side query and offline/stale fallback)
+  // Validate Player login with Supabase Auth and the public profiles table
   const handlePlayerLogin = async (email: string, pass: string): Promise<User | null> => {
-    try {
-      const response = await fetch('/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password: pass })
-      });
-      if (response.ok) {
-        const data = await response.json();
-        if (data.success && data.user) {
-          // Instantly sync this user into local state to bypass polling delay
-          setUsers(prev => {
-            const idx = prev.findIndex(u => u.id === data.user.id);
-            if (idx > -1) {
-              const updated = [...prev];
-              updated[idx] = data.user;
-              return updated;
-            }
-            return [...prev, data.user];
-          });
-          return data.user;
-        }
-      }
-    } catch (err) {
-      console.error("Server login failed, falling back to local database:", err);
-    }
+    const normalizedEmail = email.trim().toLowerCase();
 
-    // Fallback to local in-memory database search
-    const matched = users.find(u => u.email.toLowerCase() === email.toLowerCase());
-    if (matched) {
-      if (matched.password && matched.password !== pass) {
+    try {
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email: normalizedEmail,
+        password: pass,
+      });
+
+      if (authError || !authData.user) {
+        if (authError) console.error('Supabase login failed:', authError);
         return null;
       }
-      return matched;
+
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('id, full_name, display_name, email, phone, role, status, preferred_language, created_at, approved_at')
+        .eq('id', authData.user.id)
+        .single<SupabaseProfile>();
+
+      if (profileError || !profile) {
+        if (profileError) console.error('Failed to load Supabase profile:', profileError);
+        await supabase.auth.signOut();
+        return null;
+      }
+
+      if (profile.status !== 'approved') {
+        await supabase.auth.signOut();
+        return null;
+      }
+
+      const user = toAppUser(profile, authData.user.email || normalizedEmail);
+
+      setUsers(prev => {
+        const idx = prev.findIndex(u => u.id === user.id || u.email.toLowerCase() === user.email.toLowerCase());
+        const updated = [...prev];
+        if (idx > -1) {
+          updated[idx] = user;
+        } else {
+          updated.push(user);
+        }
+        localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(updated));
+        return updated;
+      });
+
+      return user;
+    } catch (err) {
+      console.error('Supabase player login failed:', err);
+      return null;
     }
-    return null;
   };
 
   // Admin approvals

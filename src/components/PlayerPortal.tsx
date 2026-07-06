@@ -128,6 +128,7 @@ export default function PlayerPortal({
   const [regInvitationCode, setRegInvitationCode] = useState('');
   const [regSuccess, setRegSuccess] = useState(false);
   const [authError, setAuthError] = useState('');
+  const [passwordResetSuccess, setPasswordResetSuccess] = useState('');
 
   // Login state
   const [loginEmail, setLoginEmail] = useState('');
@@ -291,6 +292,34 @@ export default function PlayerPortal({
     } catch (err) {
       console.error(err);
       setAuthError(language === 'en' ? 'Server error. Please try again.' : '服务器错误，请稍后重试。');
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    setAuthError('');
+    setPasswordResetSuccess('');
+
+    const email = loginEmail.trim().toLowerCase();
+    if (!email) {
+      setAuthError('Please enter your email address first.');
+      return;
+    }
+
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: window.location.origin,
+      });
+
+      if (error) {
+        console.error('Failed to send Supabase password reset email:', error);
+        setAuthError('Failed to send password reset email. Please try again.');
+        return;
+      }
+
+      setPasswordResetSuccess('Password reset email sent. Please check your inbox.');
+    } catch (err) {
+      console.error(err);
+      setAuthError('Failed to send password reset email. Please try again.');
     }
   };
 
@@ -2405,6 +2434,12 @@ export default function PlayerPortal({
               </div>
             )}
 
+            {passwordResetSuccess && authMode === 'login' && (
+              <div className="bg-emerald-500/15 border border-emerald-500/20 text-emerald-300 p-4 rounded-xl text-sm mb-6 font-medium leading-relaxed">
+                {passwordResetSuccess}
+              </div>
+            )}
+
             {regSuccess && authMode === 'register' && (
               <div className="bg-emerald-500/15 border border-emerald-500/20 text-emerald-300 p-4 rounded-xl text-sm mb-6 font-medium leading-relaxed">
                 {new Date().getTime() < new Date(2026, 6, 26).getTime() ? (
@@ -2440,6 +2475,15 @@ export default function PlayerPortal({
                     placeholder="••••••••"
                     className="w-full bg-slate-950 border border-slate-800 px-4 py-3 rounded-xl focus:border-emerald-500 focus:outline-none text-white placeholder-slate-600 transition"
                   />
+                </div>
+                <div className="text-right">
+                  <button
+                    type="button"
+                    onClick={handleForgotPassword}
+                    className="text-xs font-semibold text-emerald-400 hover:text-emerald-300 transition"
+                  >
+                    Forgot password?
+                  </button>
                 </div>
                 <button
                   type="submit"

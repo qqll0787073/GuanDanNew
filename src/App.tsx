@@ -348,6 +348,19 @@ export default function App() {
   const lastScoresWriteRef = React.useRef<number>(0);
 
   useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    const isResetPasswordLink =
+      searchParams.get('mode') === 'reset-password' ||
+      hashParams.get('mode') === 'reset-password' ||
+      hashParams.get('type') === 'recovery';
+
+    if (isResetPasswordLink) {
+      setPortal('player');
+    }
+  }, []);
+
+  useEffect(() => {
     usersRef.current = users;
   }, [users]);
 

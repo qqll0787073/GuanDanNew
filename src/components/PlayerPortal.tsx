@@ -178,8 +178,14 @@ export default function PlayerPortal({
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('mode') === 'reset-password') {
+    const searchParams = new URLSearchParams(window.location.search);
+    const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    const isResetPasswordLink =
+      searchParams.get('mode') === 'reset-password' ||
+      hashParams.get('mode') === 'reset-password' ||
+      hashParams.get('type') === 'recovery';
+
+    if (isResetPasswordLink) {
       setAuthMode('reset-password');
     }
 

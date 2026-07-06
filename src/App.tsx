@@ -188,6 +188,19 @@ const loadApprovedSupabaseUser = async (userId: string, fallbackEmail: string): 
   return toAppUser(profile, fallbackEmail);
 };
 
+const fetchSupabaseProfileUsers = async (): Promise<User[]> => {
+  const { data: profiles, error } = await supabase
+    .from('profiles')
+    .select(PROFILE_COLUMNS)
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    throw error;
+  }
+
+  return (profiles || []).map(profile => toAppUser(profile, profile.email || ''));
+};
+
 export default function App() {
   const [language, setLanguage] = useState<'en' | 'zh'>('zh');
   const [portal, setPortal] = useState<'home' | 'player' | 'admin'>('home');
@@ -804,21 +817,64 @@ export default function App() {
     }
   };
 
+  const refreshUsersFromSupabaseProfiles = async () => {
+    const profileUsers = await fetchSupabaseProfileUsers();
+    setUsers(profileUsers);
+  };
+
+  const updateProfileStatus = async (
+    userId: string,
+    updates: {
+      status: 'approved' | 'rejected' | 'suspended';
+      approved_at?: string | null;
+      approved_by?: string | null;
+    }
+  ) => {
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update(updates)
+        .eq('id', userId);
+
+      if (error) {
+        console.error('Failed to update Supabase profile status:', error);
+        alert(error.message || 'Failed to update user status.');
+        return;
+      }
+
+      await refreshUsersFromSupabaseProfiles();
+    } catch (err) {
+      console.error('Failed to update Supabase profile status:', err);
+      alert(err instanceof Error ? err.message : 'Failed to update user status.');
+    }
+  };
+
   // Admin approvals
-  const handleApproveUser = (userId: string) => {
-    saveUsersToStorage(prev => prev.map(u => u.id === userId ? { ...u, status: 'Approved' as const, approvedAt: new Date().toISOString() } : u));
+  const handleApproveUser = async (userId: string) => {
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    if (userError || !userData.user) {
+      if (userError) console.error('Failed to get Supabase admin user:', userError);
+      alert('Please log in as an administrator again.');
+      return;
+    }
+
+    await updateProfileStatus(userId, {
+      status: 'approved',
+      approved_at: new Date().toISOString(),
+      approved_by: userData.user.id,
+    });
   };
 
-  const handleRejectUser = (userId: string) => {
-    saveUsersToStorage(prev => prev.map(u => u.id === userId ? { ...u, status: 'Rejected' as const } : u));
+  const handleRejectUser = async (userId: string) => {
+    await updateProfileStatus(userId, { status: 'rejected' });
   };
 
-  const handleSuspendUser = (userId: string) => {
-    saveUsersToStorage(prev => prev.map(u => u.id === userId ? { ...u, status: 'Suspended' as const } : u));
+  const handleSuspendUser = async (userId: string) => {
+    await updateProfileStatus(userId, { status: 'suspended' });
   };
 
-  const handleReactivateUser = (userId: string) => {
-    saveUsersToStorage(prev => prev.map(u => u.id === userId ? { ...u, status: 'Approved' as const } : u));
+  const handleReactivateUser = async (userId: string) => {
+    await updateProfileStatus(userId, { status: 'approved' });
   };
 
   const handleResetPassword = (userId: string) => {

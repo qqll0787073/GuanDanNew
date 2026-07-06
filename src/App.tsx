@@ -142,6 +142,7 @@ type SupabaseProfile = {
 };
 
 const PROFILE_COLUMNS = 'id, email, display_name, avatar_url, role, status, preferred_language, created_at, approved_at, approved_by';
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type CreateAdminResult = {
   success: boolean;
@@ -198,7 +199,9 @@ const fetchSupabaseProfileUsers = async (): Promise<User[]> => {
     throw error;
   }
 
-  return (profiles || []).map(profile => toAppUser(profile, profile.email || ''));
+  return (profiles || [])
+    .filter(profile => UUID_PATTERN.test(profile.id))
+    .map(profile => toAppUser(profile, profile.email || ''));
 };
 
 export default function App() {
@@ -281,6 +284,7 @@ export default function App() {
     localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(parsedUsers));
     return parsedUsers;
   });
+  const [adminUsers, setAdminUsers] = useState<User[]>([]);
 
   const [rooms, setRooms] = useState<Room[]>(() => {
     const localRooms = localStorage.getItem(LOCAL_ROOMS_KEY);
@@ -347,6 +351,11 @@ export default function App() {
     });
   };
 
+  const refreshAdminUsersFromSupabaseProfiles = React.useCallback(async () => {
+    const profileUsers = await fetchSupabaseProfileUsers();
+    setAdminUsers(profileUsers);
+  }, []);
+
   const handleSetCurrentUser = (user: User | null) => {
     persistCurrentUser(user);
     if (!user) {
@@ -389,6 +398,14 @@ export default function App() {
   useEffect(() => {
     scoresRef.current = scoresHistory;
   }, [scoresHistory]);
+
+  useEffect(() => {
+    if (portal !== 'admin') return;
+
+    refreshAdminUsersFromSupabaseProfiles().catch(error => {
+      console.error('Failed to load Supabase profiles for AdminPortal:', error);
+    });
+  }, [portal, refreshAdminUsersFromSupabaseProfiles]);
 
   useEffect(() => {
     let isMounted = true;
@@ -766,28 +783,7 @@ export default function App() {
       return { success: false, error: data?.error || 'Failed to create administrator.' };
     }
 
-    const createdAdmin: User = {
-      id: data.user.id,
-      fullName: data.user.display_name || data.user.email,
-      displayName: data.user.display_name || data.user.email,
-      email: data.user.email,
-      phone: '',
-      role: 'admin',
-      status: 'Approved',
-      preferredLanguage: data.user.preferred_language === 'en' ? 'en' : 'zh',
-      createdAt: new Date().toISOString(),
-    };
-
-    setUsers(prev => {
-      const existingIndex = prev.findIndex(user => user.id === createdAdmin.id || user.email.toLowerCase() === createdAdmin.email.toLowerCase());
-      if (existingIndex === -1) {
-        return [...prev, createdAdmin];
-      }
-
-      const updated = [...prev];
-      updated[existingIndex] = createdAdmin;
-      return updated;
-    });
+    await refreshAdminUsersFromSupabaseProfiles();
 
     return { success: true };
   };
@@ -822,11 +818,6 @@ export default function App() {
     }
   };
 
-  const refreshUsersFromSupabaseProfiles = async () => {
-    const profileUsers = await fetchSupabaseProfileUsers();
-    setUsers(profileUsers);
-  };
-
   const updateProfileStatus = async (
     userId: string,
     updates: {
@@ -847,7 +838,7 @@ export default function App() {
         return;
       }
 
-      await refreshUsersFromSupabaseProfiles();
+      await refreshAdminUsersFromSupabaseProfiles();
     } catch (err) {
       console.error('Failed to update Supabase profile status:', err);
       alert(err instanceof Error ? err.message : 'Failed to update user status.');
@@ -1085,7 +1076,7 @@ export default function App() {
 
           <AdminPortal
             language={language}
-            users={users}
+            users={adminUsers}
             rooms={rooms}
             scoresHistory={scoresHistory}
             onApproveUser={handleApproveUser}

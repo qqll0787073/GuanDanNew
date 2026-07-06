@@ -141,6 +141,8 @@ type SupabaseProfile = {
   approved_by: string | null;
 };
 
+const PROFILE_COLUMNS = 'id, email, display_name, avatar_url, role, status, preferred_language, created_at, approved_at, approved_by';
+
 const toAppUser = (profile: SupabaseProfile, fallbackEmail: string): User => ({
   id: profile.id,
   fullName: profile.display_name || profile.email || fallbackEmail,
@@ -154,6 +156,25 @@ const toAppUser = (profile: SupabaseProfile, fallbackEmail: string): User => ({
   approvedAt: profile.approved_at || undefined,
   approvedBy: profile.approved_by || undefined,
 });
+
+const loadApprovedSupabaseUser = async (userId: string, fallbackEmail: string): Promise<User | null> => {
+  const { data: profile, error: profileError } = await supabase
+    .from('profiles')
+    .select(PROFILE_COLUMNS)
+    .eq('id', userId)
+    .single<SupabaseProfile>();
+
+  if (profileError || !profile) {
+    if (profileError) console.error('Failed to load Supabase profile:', profileError);
+    return null;
+  }
+
+  if (profile.status !== 'approved') {
+    return null;
+  }
+
+  return toAppUser(profile, fallbackEmail);
+};
 
 export default function App() {
   const [language, setLanguage] = useState<'en' | 'zh'>('zh');
@@ -276,12 +297,35 @@ export default function App() {
     return null;
   });
 
-  const handleSetCurrentUser = (user: User | null) => {
+  const persistCurrentUser = (user: User | null) => {
     setCurrentUser(user);
     if (user) {
       localStorage.setItem('guandan_current_user_v1', JSON.stringify(user));
     } else {
       localStorage.removeItem('guandan_current_user_v1');
+    }
+  };
+
+  const saveSupabaseUserLocally = (user: User) => {
+    persistCurrentUser(user);
+    setLanguage(user.preferredLanguage);
+    setUsers(prev => {
+      const idx = prev.findIndex(u => u.id === user.id || u.email.toLowerCase() === user.email.toLowerCase());
+      const updated = [...prev];
+      if (idx > -1) {
+        updated[idx] = user;
+      } else {
+        updated.push(user);
+      }
+      localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  const handleSetCurrentUser = (user: User | null) => {
+    persistCurrentUser(user);
+    if (!user) {
+      supabase.auth.signOut().catch(err => console.error('Supabase sign out failed:', err));
     }
   };
 
@@ -307,6 +351,55 @@ export default function App() {
   useEffect(() => {
     scoresRef.current = scoresHistory;
   }, [scoresHistory]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const restoreSupabaseSession = async (userId: string, email: string | undefined) => {
+      const restoredUser = await loadApprovedSupabaseUser(userId, email || '');
+      if (!isMounted) return;
+
+      if (restoredUser) {
+        saveSupabaseUserLocally(restoredUser);
+        return;
+      }
+
+      persistCurrentUser(null);
+      await supabase.auth.signOut();
+    };
+
+    const initializeSession = async () => {
+      const { data, error } = await supabase.auth.getSession();
+      if (error) {
+        console.error('Failed to restore Supabase session:', error);
+        return;
+      }
+
+      if (data.session?.user) {
+        await restoreSupabaseSession(data.session.user.id, data.session.user.email);
+      }
+    };
+
+    void initializeSession();
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!isMounted) return;
+
+      if (session?.user) {
+        void restoreSupabaseSession(session.user.id, session.user.email);
+        return;
+      }
+
+      if (event === 'SIGNED_OUT') {
+        persistCurrentUser(null);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -611,36 +704,13 @@ export default function App() {
         return null;
       }
 
-      const { data: profile, error: profileError } = await supabase
-        .from('profiles')
-        .select('id, email, display_name, avatar_url, role, status, preferred_language, created_at, approved_at, approved_by')
-        .eq('id', authData.user.id)
-        .single<SupabaseProfile>();
-
-      if (profileError || !profile) {
-        if (profileError) console.error('Failed to load Supabase profile:', profileError);
+      const user = await loadApprovedSupabaseUser(authData.user.id, authData.user.email || normalizedEmail);
+      if (!user) {
         await supabase.auth.signOut();
         return null;
       }
 
-      if (profile.status !== 'approved') {
-        await supabase.auth.signOut();
-        return null;
-      }
-
-      const user = toAppUser(profile, authData.user.email || normalizedEmail);
-
-      setUsers(prev => {
-        const idx = prev.findIndex(u => u.id === user.id || u.email.toLowerCase() === user.email.toLowerCase());
-        const updated = [...prev];
-        if (idx > -1) {
-          updated[idx] = user;
-        } else {
-          updated.push(user);
-        }
-        localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(updated));
-        return updated;
-      });
+      saveSupabaseUserLocally(user);
 
       return user;
     } catch (err) {

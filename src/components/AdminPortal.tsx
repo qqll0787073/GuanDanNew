@@ -1,9 +1,15 @@
 import React, { useState } from 'react';
 import { User, Room, ScoreRecord, UserStatus } from '../types';
 import { getTranslation } from '../i18n';
+import { supabase } from '../lib/supabase';
 import { 
   Users, CheckCircle, XCircle, AlertCircle, ShieldAlert, Search, RefreshCw, Key, Database, Activity, LayoutDashboard, Settings, Video, FileText, Ban, Power, Trash2, ArrowRight
 } from 'lucide-react';
+
+type AdminProfile = {
+  role: string | null;
+  status: string | null;
+};
 
 interface AdminPortalProps {
   language: 'en' | 'zh';
@@ -34,9 +40,7 @@ export default function AdminPortal({
   onCreateAdmin,
   onLogout,
 }: AdminPortalProps) {
-  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(() => {
-    return localStorage.getItem('guandan_admin_logged_in_v1') === 'true';
-  });
+  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
   const [adminEmail, setAdminEmail] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
   const [adminError, setAdminError] = useState('');
@@ -114,16 +118,53 @@ export default function AdminPortal({
 
   const t = (key: string) => getTranslation(key, language);
 
-  // Simple admin credentials check
-  const handleAdminLogin = (e: React.FormEvent) => {
+  // Admin login through Supabase Auth and public profiles
+  const handleAdminLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    const matched = adminsList.find(a => a.email.toLowerCase() === adminEmail.toLowerCase() && a.password === adminPassword);
-    if (matched) {
+    setAdminError('');
+
+    const email = adminEmail.trim().toLowerCase();
+    if (!email || !adminPassword) {
+      setAdminError('Please enter admin email and password.');
+      return;
+    }
+
+    try {
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password: adminPassword,
+      });
+
+      if (authError || !authData.user) {
+        if (authError) console.error('Supabase admin login failed:', authError);
+        setAdminError('Invalid admin credentials.');
+        return;
+      }
+
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('role, status')
+        .eq('id', authData.user.id)
+        .single<AdminProfile>();
+
+      if (profileError || !profile) {
+        if (profileError) console.error('Failed to load Supabase admin profile:', profileError);
+        await supabase.auth.signOut();
+        setAdminError('Admin profile was not found.');
+        return;
+      }
+
+      if (profile.role !== 'admin' || profile.status !== 'approved') {
+        await supabase.auth.signOut();
+        setAdminError('This account is not an approved administrator.');
+        return;
+      }
+
       setIsAdminLoggedIn(true);
-      localStorage.setItem('guandan_admin_logged_in_v1', 'true');
-      setAdminError('');
-    } else {
-      setAdminError(language === 'en' ? 'Invalid admin credentials.' : '管理员邮箱或密码错误。');
+      setAdminPassword('');
+    } catch (err) {
+      console.error('Supabase admin login failed:', err);
+      setAdminError('Admin login failed. Please try again.');
     }
   };
 
@@ -269,7 +310,7 @@ export default function AdminPortal({
               <button
                 onClick={() => {
                   setIsAdminLoggedIn(false);
-                  localStorage.removeItem('guandan_admin_logged_in_v1');
+                  supabase.auth.signOut().catch(err => console.error('Supabase admin sign out failed:', err));
                   if (onLogout) onLogout();
                 }}
                 className="w-full py-2 bg-slate-950 hover:bg-slate-850 text-slate-400 hover:text-red-400 transition text-xs font-bold rounded-xl border border-slate-800"

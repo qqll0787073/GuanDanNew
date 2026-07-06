@@ -3,6 +3,7 @@ import {
   User, Room, Card, PlayAction, GameState, ScoreRecord, Suit 
 } from '../types';
 import { getTranslation } from '../i18n';
+import { supabase } from '../lib/supabase';
 import { 
   generateDecks, shuffleCards, sortCards, canBeat, analyzeCombination, makeBotMove, calculateGameScore, getNextLevel, adjustRanksForLevel 
 } from '../utils/guandanEngine';
@@ -296,51 +297,47 @@ export default function PlayerPortal({
   // Change Password Handler
   const handleChangePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!currentUser) return;
+    if (!currentUser) {
+      setChangePasswordError('Please log in before changing your password.');
+      return;
+    }
     if (!oldPassword || !newPassword || !confirmNewPassword) {
-      setChangePasswordError(language === 'en' ? 'All fields are required.' : '所有字段都是必填的。');
+      setChangePasswordError(language === 'en' ? 'All fields are required.' : 'All fields are required.');
       return;
     }
     if (newPassword !== confirmNewPassword) {
-      setChangePasswordError(language === 'en' ? 'New passwords do not match.' : '两次输入的新密码不一致。');
+      setChangePasswordError(language === 'en' ? 'New passwords do not match.' : 'New passwords do not match.');
       return;
     }
     setChangePasswordError('');
     setChangePasswordSuccess('');
 
     try {
-      const response = await fetch('/api/users/update-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: currentUser.id,
-          oldPassword,
-          newPassword
-        })
-      });
-      if (response.ok) {
-        const data = await response.json();
-        if (data.success && data.user) {
-          setChangePasswordSuccess(language === 'en' ? 'Password updated successfully!' : '密码修改成功！');
-          setOldPassword('');
-          setNewPassword('');
-          setConfirmNewPassword('');
-          // Update current user
-          setCurrentUser(data.user);
-          setTimeout(() => {
-            setShowChangePasswordModal(false);
-            setChangePasswordSuccess('');
-          }, 1500);
-        } else {
-          setChangePasswordError(data.error || (language === 'en' ? 'Failed to update password.' : '密码修改失败。'));
-        }
-      } else {
-        const errData = await response.json().catch(() => ({}));
-        setChangePasswordError(errData.error || (language === 'en' ? 'Incorrect old password or server error.' : '原密码错误或服务器错误。'));
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError || !sessionData.session) {
+        if (sessionError) console.error('Failed to verify Supabase session:', sessionError);
+        setChangePasswordError('Please log in again before changing your password.');
+        return;
       }
+
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) {
+        console.error('Failed to update Supabase password:', error);
+        setChangePasswordError(error.message || 'Failed to update password.');
+        return;
+      }
+
+      setChangePasswordSuccess('Password updated successfully!');
+      setOldPassword('');
+      setNewPassword('');
+      setConfirmNewPassword('');
+      setTimeout(() => {
+        setShowChangePasswordModal(false);
+        setChangePasswordSuccess('');
+      }, 1500);
     } catch (err) {
       console.error(err);
-      setChangePasswordError(language === 'en' ? 'Failed to communicate with server.' : '无法连接服务器，请稍后重试。');
+      setChangePasswordError('Failed to update password. Please try again.');
     }
   };
 

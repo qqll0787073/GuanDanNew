@@ -634,11 +634,16 @@ export default function App() {
       });
 
       if (signUpError || !signUpData.user) {
-        if (signUpError) console.error('Supabase registration failed:', signUpError);
-        if (signUpError?.message.toLowerCase().includes('registered')) {
-          alert('This email is already registered.');
+        if (signUpError) {
+          console.error('Supabase registration failed:', signUpError);
+          if (signUpError.message.toLowerCase().includes('registered')) {
+            alert('This email is already registered.');
+          } else {
+            alert('Registration failed. Please check your email and password, then try again.');
+          }
         } else {
-          alert('Registration failed.');
+          console.error('Supabase registration failed: signUp returned no user.');
+          alert('Registration failed. Please try again.');
         }
         return null;
       }
@@ -657,9 +662,14 @@ export default function App() {
         .single<SupabaseProfile>();
 
       if (profileError || !profile) {
-        if (profileError) console.error('Failed to create Supabase profile:', profileError);
+        if (profileError) {
+          console.error('Failed to create Supabase profile:', profileError);
+          alert('Registration failed while creating your profile. Please try again later.');
+        } else {
+          console.error('Failed to create Supabase profile: upsert returned no profile.');
+          alert('Registration failed while creating your profile. Please try again later.');
+        }
         await supabase.auth.signOut();
-        alert('Registration failed while creating your profile.');
         return null;
       }
 
@@ -674,7 +684,7 @@ export default function App() {
       return registeredUser;
     } catch (err) {
       console.error('Supabase registration failed:', err);
-      alert('Registration failed.');
+      alert('Registration failed. Please try again.');
       return null;
     }
   };

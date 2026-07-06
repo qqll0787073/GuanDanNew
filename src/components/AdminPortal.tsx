@@ -11,6 +11,11 @@ type AdminProfile = {
   status: string | null;
 };
 
+type CreateAdminResult = {
+  success: boolean;
+  error?: string;
+};
+
 interface AdminPortalProps {
   language: 'en' | 'zh';
   users: User[];
@@ -22,7 +27,7 @@ interface AdminPortalProps {
   onReactivateUser: (userId: string) => void;
   onResetPassword: (userId: string) => void;
   roomsStatusUpdate: (updatedRooms: Room[], roomId?: number) => void;
-  onCreateAdmin?: (adminData: { name: string; email: string; password?: string }) => void;
+  onCreateAdmin?: (adminData: { name: string; email: string; password?: string }) => Promise<CreateAdminResult>;
   onLogout?: () => void;
 }
 
@@ -62,8 +67,9 @@ export default function AdminPortal({
   const [newAdminPass, setNewAdminPass] = useState('');
   const [adminFormError, setAdminFormError] = useState('');
   const [adminFormSuccess, setAdminFormSuccess] = useState('');
+  const [isCreatingAdmin, setIsCreatingAdmin] = useState(false);
 
-  const handleAddAdmin = (e: React.FormEvent) => {
+  const handleAddAdmin = async (e: React.FormEvent) => {
     e.preventDefault();
     setAdminFormError('');
     setAdminFormSuccess('');
@@ -74,12 +80,29 @@ export default function AdminPortal({
       return;
     }
 
-    if (onCreateAdmin) {
-      onCreateAdmin({
+    if (!onCreateAdmin) {
+      setAdminFormError('Admin creation is not available.');
+      return;
+    }
+
+    setIsCreatingAdmin(true);
+    try {
+      const result = await onCreateAdmin({
         name: newAdminName.trim(),
         email: emailLower,
         password: newAdminPass,
       });
+
+      if (!result.success) {
+        setAdminFormError(result.error || 'Failed to create administrator.');
+        return;
+      }
+    } catch (err) {
+      console.error('Create administrator failed:', err);
+      setAdminFormError(err instanceof Error ? err.message : 'Failed to create administrator.');
+      return;
+    } finally {
+      setIsCreatingAdmin(false);
     }
 
     setNewAdminName('');
@@ -685,6 +708,7 @@ export default function AdminPortal({
 
                     <button
                       type="submit"
+                      disabled={isCreatingAdmin}
                       className="w-full py-2.5 bg-teal-500 hover:bg-teal-400 text-slate-950 font-extrabold rounded-xl text-xs uppercase tracking-wider transition shadow-lg shadow-teal-500/5 hover:shadow-teal-500/10"
                     >
                       {language === 'zh' ? '确认创建管理员' : 'Create Administrator'}

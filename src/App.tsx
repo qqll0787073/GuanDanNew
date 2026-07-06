@@ -143,6 +143,11 @@ type SupabaseProfile = {
 
 const PROFILE_COLUMNS = 'id, email, display_name, avatar_url, role, status, preferred_language, created_at, approved_at, approved_by';
 
+type CreateAdminResult = {
+  success: boolean;
+  error?: string;
+};
+
 const toAppUserStatus = (status: string | null): User['status'] => {
   if (status === 'pending') return 'Pending';
   if (status === 'suspended') return 'Suspended';
@@ -701,20 +706,72 @@ export default function App() {
       return null;
     }
   };
-  // Create Admin user
-  const handleCreateAdmin = (adminData: { name: string; email: string; password?: string }) => {
-    const newAdmin: User = {
-      id: `user-admin-${Date.now()}`,
-      fullName: adminData.name,
-      displayName: adminData.name,
-      email: adminData.email.toLowerCase(),
-      password: adminData.password,
+  // Create Admin user through the Supabase Edge Function
+  const handleCreateAdmin = async (adminData: { name: string; email: string; password?: string }): Promise<CreateAdminResult> => {
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    const accessToken = sessionData.session?.access_token;
+
+    if (sessionError || !accessToken) {
+      if (sessionError) console.error('Failed to get Supabase admin session:', sessionError);
+      return { success: false, error: 'Please log in as an administrator again.' };
+    }
+
+    const { data, error } = await supabase.functions.invoke<{
+      success?: boolean;
+      error?: string;
+      user?: {
+        id: string;
+        email: string;
+        display_name: string | null;
+        role: string | null;
+        status: string | null;
+        preferred_language: string | null;
+      };
+    }>('create-admin-user', {
+      body: {
+        email: adminData.email.trim().toLowerCase(),
+        password: adminData.password || '',
+        display_name: adminData.name.trim(),
+        preferred_language: language,
+      },
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    if (error) {
+      console.error('Failed to create admin via Supabase function:', error);
+      return { success: false, error: error.message || 'Failed to create administrator.' };
+    }
+
+    if (!data?.success || !data.user) {
+      return { success: false, error: data?.error || 'Failed to create administrator.' };
+    }
+
+    const createdAdmin: User = {
+      id: data.user.id,
+      fullName: data.user.display_name || data.user.email,
+      displayName: data.user.display_name || data.user.email,
+      email: data.user.email,
+      phone: '',
       role: 'admin',
       status: 'Approved',
-      preferredLanguage: 'zh',
+      preferredLanguage: data.user.preferred_language === 'en' ? 'en' : 'zh',
       createdAt: new Date().toISOString(),
     };
-    saveUsersToStorage(prev => [...prev, newAdmin]);
+
+    setUsers(prev => {
+      const existingIndex = prev.findIndex(user => user.id === createdAdmin.id || user.email.toLowerCase() === createdAdmin.email.toLowerCase());
+      if (existingIndex === -1) {
+        return [...prev, createdAdmin];
+      }
+
+      const updated = [...prev];
+      updated[existingIndex] = createdAdmin;
+      return updated;
+    });
+
+    return { success: true };
   };
 
   // Validate Player login with Supabase Auth and the public profiles table

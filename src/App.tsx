@@ -143,6 +143,13 @@ type SupabaseProfile = {
 
 const PROFILE_COLUMNS = 'id, email, display_name, avatar_url, role, status, preferred_language, created_at, approved_at, approved_by';
 
+const toAppUserStatus = (status: string | null): User['status'] => {
+  if (status === 'pending') return 'Pending';
+  if (status === 'suspended') return 'Suspended';
+  if (status === 'rejected') return 'Rejected';
+  return 'Approved';
+};
+
 const toAppUser = (profile: SupabaseProfile, fallbackEmail: string): User => ({
   id: profile.id,
   fullName: profile.display_name || profile.email || fallbackEmail,
@@ -150,7 +157,7 @@ const toAppUser = (profile: SupabaseProfile, fallbackEmail: string): User => ({
   email: profile.email || fallbackEmail,
   phone: '',
   role: profile.role === 'admin' ? 'admin' : 'player',
-  status: 'Approved',
+  status: toAppUserStatus(profile.status),
   preferredLanguage: profile.preferred_language === 'en' ? 'en' : 'zh',
   createdAt: profile.created_at || new Date().toISOString(),
   approvedAt: profile.approved_at || undefined,
@@ -599,80 +606,78 @@ export default function App() {
     });
   };
 
-  // Register Player applicant (Saves directly to server database to prevent sync deletion/race conditions)
+  // Register Player applicant through Supabase Auth and public profiles
   const handleRegisterUser = async (newUser: Omit<User, 'id' | 'role' | 'status' | 'createdAt'>): Promise<User | null> => {
     const emailNorm = newUser.email.trim().toLowerCase();
-    
+    const password = newUser.password || '';
+    const displayName = newUser.displayName || newUser.fullName || emailNorm;
+    const preferredLanguage = newUser.preferredLanguage || language || 'en';
+
+    if (!password) {
+      alert('Password is required.');
+      return null;
+    }
+
     // Before July 26, 2026, registration doesn't require admin approval and status is directly Approved.
     const autoApprove = new Date().getTime() < new Date(2026, 6, 26).getTime();
-    const freshUser: User = {
-      ...newUser,
-      email: emailNorm,
-      id: `user-${Date.now()}`,
-      role: 'player',
-      status: autoApprove ? 'Approved' : 'Pending',
-      createdAt: new Date().toISOString(),
-      ...(autoApprove ? { approvedAt: new Date().toISOString() } : {}),
-    };
+    const profileStatus = autoApprove ? 'approved' : 'pending';
 
     try {
-      const response = await fetch('/api/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user: freshUser })
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+        email: emailNorm,
+        password,
+        options: {
+          data: {
+            display_name: displayName,
+          },
+        },
       });
-      if (response.ok) {
-        const data = await response.json();
-        if (data.success && data.user) {
-          // Immediately update local React state and local storage with the server-verified user
-          setUsers(prev => {
-            const idx = prev.findIndex(u => u.id === data.user.id || u.email.toLowerCase() === emailNorm);
-            let updated;
-            if (idx > -1) {
-              updated = [...prev];
-              updated[idx] = data.user;
-            } else {
-              updated = [...prev, data.user];
-            }
-            localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(updated));
-            return updated;
-          });
-          if (autoApprove) {
-            handleSetCurrentUser(data.user);
-          }
-          return data.user;
+
+      if (signUpError || !signUpData.user) {
+        if (signUpError) console.error('Supabase registration failed:', signUpError);
+        if (signUpError?.message.toLowerCase().includes('registered')) {
+          alert('This email is already registered.');
         } else {
-          if (data.error === 'Email already registered') {
-            alert(language === 'en' ? 'This email is already registered.' : '该邮箱已被注册。');
-            return null;
-          }
-          throw new Error(data.error || 'Registration failed');
+          alert('Registration failed.');
         }
-      } else {
-        const errData = await response.json().catch(() => ({}));
-        if (errData && errData.error === 'Email already registered') {
-          alert(language === 'en' ? 'This email is already registered.' : '该邮箱已被注册。');
-          return null;
-        }
-        // Throw to trigger catch block for local fallback (e.g. 404 Not Found, 500 Server Error)
-        throw new Error(errData.error || `Server error ${response.status}`);
-      }
-    } catch (err) {
-      console.error("Server register failed, falling back to local:", err);
-      // Fallback
-      const existsLocally = users.some(u => u.email.toLowerCase() === emailNorm);
-      if (existsLocally) {
-        alert(language === 'en' ? 'This email is already registered.' : '该邮箱已被注册。');
         return null;
       }
-      saveUsersToStorage(prev => [...prev, freshUser]);
-      if (autoApprove) {
-        handleSetCurrentUser(freshUser);
+
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .upsert({
+          id: signUpData.user.id,
+          email: emailNorm,
+          display_name: displayName,
+          role: 'player',
+          status: profileStatus,
+          preferred_language: preferredLanguage,
+        }, { onConflict: 'id' })
+        .select(PROFILE_COLUMNS)
+        .single<SupabaseProfile>();
+
+      if (profileError || !profile) {
+        if (profileError) console.error('Failed to create Supabase profile:', profileError);
+        await supabase.auth.signOut();
+        alert('Registration failed while creating your profile.');
+        return null;
       }
-      return freshUser;
+
+      const registeredUser = toAppUser(profile, emailNorm);
+
+      if (registeredUser.status === 'Approved') {
+        saveSupabaseUserLocally(registeredUser);
+      } else {
+        await supabase.auth.signOut();
+      }
+
+      return registeredUser;
+    } catch (err) {
+      console.error('Supabase registration failed:', err);
+      alert('Registration failed.');
+      return null;
     }
   };
-
   // Create Admin user
   const handleCreateAdmin = (adminData: { name: string; email: string; password?: string }) => {
     const newAdmin: User = {

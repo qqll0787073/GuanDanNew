@@ -397,8 +397,13 @@ export default function App() {
       const restoredUser = await loadApprovedSupabaseUser(userId, email || '');
       if (!isMounted) return;
 
-      if (restoredUser) {
+      if (restoredUser?.role === 'player') {
         saveSupabaseUserLocally(restoredUser);
+        return;
+      }
+
+      if (restoredUser?.role === 'admin') {
+        persistCurrentUser(null);
         return;
       }
 

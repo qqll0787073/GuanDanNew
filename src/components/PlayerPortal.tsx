@@ -115,7 +115,7 @@ export default function PlayerPortal({
   onRecordGame,
   scoresHistory,
 }: PlayerPortalProps) {
-  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [authMode, setAuthMode] = useState<'login' | 'register' | 'forgot-password' | 'reset-password'>('login');
   
   // Registration state
   const [regFullName, setRegFullName] = useState('');
@@ -133,6 +133,8 @@ export default function PlayerPortal({
   // Login state
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [resetNewPassword, setResetNewPassword] = useState('');
+  const [resetConfirmPassword, setResetConfirmPassword] = useState('');
 
   // Change password state
   const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
@@ -174,6 +176,25 @@ export default function PlayerPortal({
 
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('mode') === 'reset-password') {
+      setAuthMode('reset-password');
+    }
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setAuthMode('reset-password');
+        setAuthError('');
+        setPasswordResetSuccess('');
+      }
+    });
+
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
 
   // Activate and control the WebRTC webcam and microphone
   useEffect(() => {
@@ -269,6 +290,7 @@ export default function PlayerPortal({
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
+    setPasswordResetSuccess('');
     if (!loginEmail.trim() || !loginPassword) {
       setAuthError(language === 'en' ? 'Please enter your email and password.' : '请输入邮箱和密码。');
       return;
@@ -307,7 +329,7 @@ export default function PlayerPortal({
 
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: window.location.origin,
+        redirectTo: `${window.location.origin}/?mode=reset-password`,
       });
 
       if (error) {
@@ -320,6 +342,40 @@ export default function PlayerPortal({
     } catch (err) {
       console.error(err);
       setAuthError('Failed to send password reset email. Please try again.');
+    }
+  };
+
+  const handleResetPasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    setPasswordResetSuccess('');
+
+    if (!resetNewPassword || !resetConfirmPassword) {
+      setAuthError('Please enter and confirm your new password.');
+      return;
+    }
+
+    if (resetNewPassword !== resetConfirmPassword) {
+      setAuthError('New passwords do not match.');
+      return;
+    }
+
+    try {
+      const { error } = await supabase.auth.updateUser({ password: resetNewPassword });
+      if (error) {
+        console.error('Failed to reset Supabase password:', error);
+        setAuthError('Failed to reset password. Please try again.');
+        return;
+      }
+
+      setResetNewPassword('');
+      setResetConfirmPassword('');
+      setAuthMode('login');
+      setPasswordResetSuccess('Password updated successfully. Please log in with your new password.');
+      window.history.replaceState(null, '', window.location.origin);
+    } catch (err) {
+      console.error(err);
+      setAuthError('Failed to reset password. Please try again.');
     }
   };
 
@@ -2404,27 +2460,51 @@ export default function PlayerPortal({
       </header>
 
       {/* NOT AUTHENTICATED STATE */}
-      {!currentUser && (
+      {(!currentUser || authMode === 'reset-password') && (
         <div className="max-w-md mx-auto py-16 px-4">
           <div className="bg-slate-900 border border-slate-800 p-8 rounded-2xl shadow-2xl relative overflow-hidden">
             <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none"></div>
             
             <div className="text-center mb-8">
               <h2 className="text-2xl font-bold tracking-tight text-white">
-                {authMode === 'login' ? t('playerLogin') : t('registerTitle')}
+                {authMode === 'login'
+                  ? t('playerLogin')
+                  : authMode === 'register'
+                    ? t('registerTitle')
+                    : authMode === 'forgot-password'
+                      ? 'Reset password'
+                      : 'Set new password'}
               </h2>
               <p className="text-sm text-slate-400 mt-2">
-                {authMode === 'login' ? t('dontHaveAccount') : t('alreadyHaveAccount')}{' '}
-                <button
-                  onClick={() => {
-                    setAuthMode(authMode === 'login' ? 'register' : 'login');
-                    setAuthError('');
-                    setRegSuccess(false);
-                  }}
-                  className="text-emerald-400 hover:underline font-semibold"
-                >
-                  {authMode === 'login' ? t('applyNow') : t('loginNow')}
-                </button>
+                {authMode === 'forgot-password' || authMode === 'reset-password' ? (
+                  <button
+                    onClick={() => {
+                      setAuthMode('login');
+                      setAuthError('');
+                      setPasswordResetSuccess('');
+                      setResetNewPassword('');
+                      setResetConfirmPassword('');
+                      window.history.replaceState(null, '', window.location.origin);
+                    }}
+                    className="text-emerald-400 hover:underline font-semibold"
+                  >
+                    Back to login
+                  </button>
+                ) : (
+                  <>
+                    {authMode === 'login' ? t('dontHaveAccount') : t('alreadyHaveAccount')}{' '}
+                    <button
+                      onClick={() => {
+                        setAuthMode(authMode === 'login' ? 'register' : 'login');
+                        setAuthError('');
+                        setRegSuccess(false);
+                      }}
+                      className="text-emerald-400 hover:underline font-semibold"
+                    >
+                      {authMode === 'login' ? t('applyNow') : t('loginNow')}
+                    </button>
+                  </>
+                )}
               </p>
             </div>
 
@@ -2434,7 +2514,7 @@ export default function PlayerPortal({
               </div>
             )}
 
-            {passwordResetSuccess && authMode === 'login' && (
+            {passwordResetSuccess && (authMode === 'login' || authMode === 'forgot-password') && (
               <div className="bg-emerald-500/15 border border-emerald-500/20 text-emerald-300 p-4 rounded-xl text-sm mb-6 font-medium leading-relaxed">
                 {passwordResetSuccess}
               </div>
@@ -2452,7 +2532,72 @@ export default function PlayerPortal({
               </div>
             )}
 
-            {authMode === 'login' ? (
+            {authMode === 'forgot-password' ? (
+              <form onSubmit={(e) => { e.preventDefault(); void handleForgotPassword(); }} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">{t('email')}</label>
+                  <input
+                    type="email"
+                    required
+                    value={loginEmail}
+                    onChange={(e) => setLoginEmail(e.target.value)}
+                    placeholder="player@guandan.com"
+                    className="w-full bg-slate-950 border border-slate-800 px-4 py-3 rounded-xl focus:border-emerald-500 focus:outline-none text-white placeholder-slate-600 transition"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-3.5 rounded-xl shadow-lg hover:shadow-emerald-500/10 transition duration-300 flex items-center justify-center space-x-2"
+                >
+                  <span>Send reset email</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode('login');
+                    setAuthError('');
+                    setPasswordResetSuccess('');
+                    window.history.replaceState(null, '', window.location.origin);
+                  }}
+                  className="w-full text-sm font-semibold text-slate-300 hover:text-emerald-300 transition"
+                >
+                  Back to login
+                </button>
+              </form>
+            ) : authMode === 'reset-password' ? (
+              <form onSubmit={handleResetPasswordSubmit} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">New password</label>
+                  <input
+                    type="password"
+                    required
+                    value={resetNewPassword}
+                    onChange={(e) => setResetNewPassword(e.target.value)}
+                    placeholder="New password"
+                    className="w-full bg-slate-950 border border-slate-800 px-4 py-3 rounded-xl focus:border-emerald-500 focus:outline-none text-white placeholder-slate-600 transition"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">Confirm new password</label>
+                  <input
+                    type="password"
+                    required
+                    value={resetConfirmPassword}
+                    onChange={(e) => setResetConfirmPassword(e.target.value)}
+                    placeholder="Confirm new password"
+                    className="w-full bg-slate-950 border border-slate-800 px-4 py-3 rounded-xl focus:border-emerald-500 focus:outline-none text-white placeholder-slate-600 transition"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-3.5 rounded-xl shadow-lg hover:shadow-emerald-500/10 transition duration-300 flex items-center justify-center space-x-2"
+                >
+                  <span>Submit</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </form>
+            ) : authMode === 'login' ? (
               <form onSubmit={handleLogin} className="space-y-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">{t('email')}</label>
@@ -2479,7 +2624,11 @@ export default function PlayerPortal({
                 <div className="text-right">
                   <button
                     type="button"
-                    onClick={handleForgotPassword}
+                    onClick={() => {
+                      setAuthMode('forgot-password');
+                      setAuthError('');
+                      setPasswordResetSuccess('');
+                    }}
                     className="text-xs font-semibold text-emerald-400 hover:text-emerald-300 transition"
                   >
                     Forgot password?
@@ -2596,7 +2745,7 @@ export default function PlayerPortal({
       )}
 
       {/* PLAYER IS LOGGED IN - SHOW LOBBY OR GAME ROOM */}
-      {currentUser && (
+      {currentUser && authMode !== 'reset-password' && (
         <main className="max-w-7xl mx-auto px-4 py-8">
           
           {/* LOBBY VIEW (NO SELECTED ROOM) */}

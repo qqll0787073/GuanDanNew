@@ -130,28 +130,29 @@ const getErrorMessage = (error: unknown) => {
 
 type SupabaseProfile = {
   id: string;
-  full_name: string | null;
-  display_name: string | null;
   email: string | null;
-  phone: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
   role: string | null;
   status: string | null;
   preferred_language: string | null;
   created_at: string | null;
   approved_at: string | null;
+  approved_by: string | null;
 };
 
 const toAppUser = (profile: SupabaseProfile, fallbackEmail: string): User => ({
   id: profile.id,
-  fullName: profile.full_name || profile.display_name || fallbackEmail,
-  displayName: profile.display_name || profile.full_name || fallbackEmail,
+  fullName: profile.display_name || profile.email || fallbackEmail,
+  displayName: profile.display_name || profile.email || fallbackEmail,
   email: profile.email || fallbackEmail,
-  phone: profile.phone || undefined,
+  phone: '',
   role: profile.role === 'admin' ? 'admin' : 'player',
   status: 'Approved',
   preferredLanguage: profile.preferred_language === 'en' ? 'en' : 'zh',
   createdAt: profile.created_at || new Date().toISOString(),
   approvedAt: profile.approved_at || undefined,
+  approvedBy: profile.approved_by || undefined,
 });
 
 export default function App() {
@@ -612,7 +613,7 @@ export default function App() {
 
       const { data: profile, error: profileError } = await supabase
         .from('profiles')
-        .select('id, full_name, display_name, email, phone, role, status, preferred_language, created_at, approved_at')
+        .select('id, email, display_name, avatar_url, role, status, preferred_language, created_at, approved_at, approved_by')
         .eq('id', authData.user.id)
         .single<SupabaseProfile>();
 

@@ -267,6 +267,10 @@ export default function PlayerPortal({
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
+    if (!loginEmail.trim() || !loginPassword) {
+      setAuthError(language === 'en' ? 'Please enter your email and password.' : '请输入邮箱和密码。');
+      return;
+    }
     try {
       const user = await onLogin(loginEmail, loginPassword);
       if (!user) {

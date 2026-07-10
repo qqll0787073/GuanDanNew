@@ -149,6 +149,10 @@ type CreateAdminResult = {
   error?: string;
 };
 
+type AdminUsersLoadOptions = {
+  retryIfSessionNotReady?: boolean;
+};
+
 const toAppUserStatus = (status: string | null): User['status'] => {
   if (status === 'pending') return 'Pending';
   if (status === 'suspended') return 'Suspended';
@@ -285,6 +289,7 @@ export default function App() {
     return parsedUsers;
   });
   const [adminUsers, setAdminUsers] = useState<User[]>([]);
+  const [adminUsersError, setAdminUsersError] = useState<string | null>(null);
 
   const [rooms, setRooms] = useState<Room[]>(() => {
     const localRooms = localStorage.getItem(LOCAL_ROOMS_KEY);
@@ -351,9 +356,61 @@ export default function App() {
     });
   };
 
-  const refreshAdminUsersFromSupabaseProfiles = React.useCallback(async () => {
-    const profileUsers = await fetchSupabaseProfileUsers();
-    setAdminUsers(profileUsers);
+  const logAdminUsersLoadError = (error: unknown) => {
+    const supabaseError = error as {
+      code?: string;
+      message?: string;
+      details?: string;
+      hint?: string;
+    };
+
+    console.error('Failed to load Supabase profiles for AdminPortal:', {
+      code: supabaseError?.code,
+      message: supabaseError?.message || (error instanceof Error ? error.message : String(error)),
+      details: supabaseError?.details,
+      hint: supabaseError?.hint,
+    });
+  };
+
+  const refreshAdminUsersFromSupabaseProfiles = React.useCallback(async (options: AdminUsersLoadOptions = {}) => {
+    const loadProfiles = async () => {
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) {
+        throw sessionError;
+      }
+
+      if (!sessionData.session?.access_token) {
+        throw new Error('Supabase admin session is not ready.');
+      }
+
+      const profileUsers = await fetchSupabaseProfileUsers();
+      setAdminUsers(profileUsers);
+      setAdminUsersError(null);
+    };
+
+    try {
+      await loadProfiles();
+    } catch (error) {
+      const isSessionNotReady =
+        error instanceof Error &&
+        error.message.toLowerCase().includes('session') &&
+        error.message.toLowerCase().includes('not ready');
+
+      if (options.retryIfSessionNotReady && isSessionNotReady) {
+        await new Promise(resolve => window.setTimeout(resolve, 300));
+        try {
+          await loadProfiles();
+          return;
+        } catch (retryError) {
+          logAdminUsersLoadError(retryError);
+          setAdminUsersError('Unable to load users from Supabase.');
+          return;
+        }
+      }
+
+      logAdminUsersLoadError(error);
+      setAdminUsersError('Unable to load users from Supabase.');
+    }
   }, []);
 
   const handleSetCurrentUser = (user: User | null) => {
@@ -369,6 +426,7 @@ export default function App() {
   const usersRef = React.useRef(users);
   const roomsRef = React.useRef(rooms);
   const scoresRef = React.useRef(scoresHistory);
+  const portalRef = React.useRef(portal);
 
   const lastUsersWriteRef = React.useRef<number>(0);
   const lastRoomsWriteRef = React.useRef<number>(0);
@@ -392,6 +450,10 @@ export default function App() {
   }, [users]);
 
   useEffect(() => {
+    portalRef.current = portal;
+  }, [portal]);
+
+  useEffect(() => {
     roomsRef.current = rooms;
   }, [rooms]);
 
@@ -402,9 +464,7 @@ export default function App() {
   useEffect(() => {
     if (portal !== 'admin') return;
 
-    refreshAdminUsersFromSupabaseProfiles().catch(error => {
-      console.error('Failed to load Supabase profiles for AdminPortal:', error);
-    });
+    void refreshAdminUsersFromSupabaseProfiles();
   }, [portal, refreshAdminUsersFromSupabaseProfiles]);
 
   useEffect(() => {
@@ -444,6 +504,10 @@ export default function App() {
 
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       if (!isMounted) return;
+
+      if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && portalRef.current === 'admin') {
+        void refreshAdminUsersFromSupabaseProfiles({ retryIfSessionNotReady: true });
+      }
 
       if (session?.user) {
         void restoreSupabaseSession(session.user.id, session.user.email);
@@ -1086,6 +1150,8 @@ export default function App() {
             onResetPassword={handleResetPassword}
             roomsStatusUpdate={handleUpdateRooms}
             onCreateAdmin={handleCreateAdmin}
+            onAdminLoginSuccess={() => refreshAdminUsersFromSupabaseProfiles({ retryIfSessionNotReady: true })}
+            adminUsersError={adminUsersError}
             onLogout={() => setPortal('home')}
           />
         </div>

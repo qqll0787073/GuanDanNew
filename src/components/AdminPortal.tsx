@@ -28,6 +28,8 @@ interface AdminPortalProps {
   onResetPassword: (userId: string) => void;
   roomsStatusUpdate: (updatedRooms: Room[], roomId?: number) => void;
   onCreateAdmin?: (adminData: { name: string; email: string; password?: string }) => Promise<CreateAdminResult>;
+  onAdminLoginSuccess?: () => Promise<void>;
+  adminUsersError?: string | null;
   onLogout?: () => void;
 }
 
@@ -43,6 +45,8 @@ export default function AdminPortal({
   onResetPassword,
   roomsStatusUpdate,
   onCreateAdmin,
+  onAdminLoginSuccess,
+  adminUsersError,
   onLogout,
 }: AdminPortalProps) {
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
@@ -181,6 +185,10 @@ export default function AdminPortal({
         await supabase.auth.signOut();
         setAdminError('This account is not an approved administrator.');
         return;
+      }
+
+      if (onAdminLoginSuccess) {
+        await onAdminLoginSuccess();
       }
 
       setIsAdminLoggedIn(true);
@@ -353,6 +361,12 @@ export default function AdminPortal({
                 <p className="text-xs text-slate-500 mt-1">Review registrations, manage active terms rooms, resolve dispute sheets.</p>
               </div>
             </div>
+
+            {adminUsersError && (
+              <div className="bg-red-500/10 border border-red-500/30 text-red-300 px-4 py-3 rounded-xl text-sm font-semibold">
+                {adminUsersError}
+              </div>
+            )}
 
             {/* METRICS COUNTER BOARD */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
